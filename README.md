@@ -118,8 +118,48 @@
     </tr>
   </tbody>
 </table>
-
 <hr />
+
+<h2>📅 正式版除息資料擷取策略 (Dividend Data Retrieval Strategy)</h2>
+<p>針對 Task 3 實務上正式版串接臺灣證券交易所 (TWSE) 與公開資訊觀測站 (MOPS) 之策略說明：</p>
+<ul>
+  <li><b>資料來源 (Data Sources)</b>：
+    <ul>
+      <li>臺灣證券交易所 (TWSE) OpenAPI / 每日除權除息預告表 (Daily Ex-Dividend Schedule)。</li>
+      <li>公開資訊觀測站 (MOPS) 公司重大訊息與股利分派公告。</li>
+    </ul>
+  </li>
+  <li><b>擷取機制 (ETL & Batch Scheduling)</b>：
+    <ul>
+      <li><b>每日排程 (Daily Cron Job)</b>：每日清晨 05:00 執行 ETL Pipeline，自動抓取當日及未來 30 天內預定除息之權值股名單、發放現金股利金額與配股資訊。</li>
+      <li><b>快取機制 (Redis Caching)</b>：預期除息點數計算結果寫入 Redis 快取（Key: <code>div_points:{contract_month}</code>），供即時 Pricing Engine 毫秒級調用，避免每筆 Tick 重新查詢 DB。</li>
+    </ul>
+  </li>
+  <li><b>除息點數動態換算邏輯 (Point Impact Calculation)</b>：
+    <ul>
+      <li>依據權值股佔大盤權重公式：$\text{影響點數} = \frac{\text{個股現金股利} \times \text{公司發行股數}}{\text{大盤總市值基期}} \times \text{當期大盤指數}$。</li>
+      <li>僅動態採計「當前時間至該期貨合約到期日 (Settlement Date) 之間」發生的除息總點數。</li>
+    </ul>
+  </li>
+  <li><b>資料異常與防呆機制 (Exception Handling)</b>：
+    <ul>
+      <li>若證交所 API 斷線或爬蟲抓取失敗，系統自動回退 (Fallback) 使用前一日的快取數據，並將系統除息狀態標記為 <code>DIVIDEND_UNVERIFIED</code>。</li>
+      <li>前端畫面同步呈現風險警告標籤，避免交易員因數據缺損產生誤判。</li>
+    </ul>
+  </li>
+</ul>
+<hr />
+<hr />
+
+<h2>⚖️ 正式版 Legging Risk 動態估算策略 (Dynamic Legging Risk Engine)</h2>
+<p>針對兩腿交易（買現貨、賣期貨）無法 100% 同步成交之執行風險 (Legging Risk)，正式版系統將從固定 Buffer 升級為動態風險估算模型，採計以下關鍵數據：</p>
+<ul>
+  <li><b>API 端到端延遲 (API Latency & Network Skew)</b>：即時監測券商 WebSocket/FIX 介面之往返延遲 (RTT) 與現期兩腿時間戳落差 (Time Skew)。延遲越高， Legging Risk Buffer 動態調升。</li>
+  <li><b>委託簿深度與吃單耗損 (Order Book Depth & Sweep Cost)</b>：分析 5 檔 Bid/Ask 的檔位掛單量，若頂檔掛單量不足以消化目標張數，動態計入穿透滑價成本。</li>
+  <li><b>市場即時波動率 (Real-time Volatility - IV / RV)</b>：採計標的資產近 1 分鐘與 5 分鐘之高頻波動率，當市場處於劇烈波動時，自動放寬風險緩衝區。</li>
+  <li><b>歷史成交率與撤單率 (Historical Fill Rate & Cancel Rate)</b>：統計過去 100 筆觸發訂單在該券商 API 的平均成交時間與失敗/部分成交 (Partial Fill) 機率。</li>
+  <li><b>即時市場成交量與流動性 (Market Volume & Liquidity Index)</b>：評估當前 Tick 的成交活絡度，避免在流動性枯竭時段發出虛假套利訊號。</li>
+</ul>
 
 <h2>📋 考題第十三區塊：題目與回答</h2>
 
