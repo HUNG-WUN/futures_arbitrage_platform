@@ -1,0 +1,9 @@
+services:
+  arbitrage-platform:
+    build: .
+    container_name: futures_arbitrage_app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./arbitrage.db:/app/arbitrage.db
+    restart: always

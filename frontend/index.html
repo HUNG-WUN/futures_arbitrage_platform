@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>期貨正逆價差即時監控與通知平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+    <div class="container mx-auto px-4 py-6">
+        <!-- 頂部標題列與系統狀態 -->
+        <header class="flex flex-col md:flex-row justify-between items-center pb-6 border-b border-slate-700 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-sky-400">⚡ 期貨正逆價差即時監控與通知平台 V1.0</h1>
+                <p class="text-xs text-slate-400 mt-1">即時行情串流 · 除息校正 · VWAP 滑價 · 保證金壓力測試</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span id="conn-status" class="px-3 py-1 text-xs rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">連線中...</span>
+                <button onclick="toggleTestMode('stale')" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded">測試: 模擬 Stale Quote</button>
+                <button onclick="toggleTestMode('skew')" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded">測試: 模擬 Time Skew</button>
+            </div>
+        </header>
+
+        <!-- 即時通知警示區 -->
+        <div id="alert-banner" class="my-4 p-4 rounded-lg bg-slate-800 border border-slate-700 hidden">
+            <div class="flex items-start justify-between">
+                <div>
+                    <h3 id="alert-title" class="font-bold text-lg"></h3>
+                    <p id="alert-msg" class="text-sm text-slate-300 mt-1"></p>
+                </div>
+                <span id="alert-badge" class="px-2 py-1 text-xs rounded font-bold"></span>
+            </div>
+        </div>
+
+        <!-- 核心指標卡片區 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 my-6">
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <span class="text-xs text-slate-400">現貨 / 期貨價格 (Last)</span>
+                <div class="flex justify-between items-baseline mt-2">
+                    <span id="spot-price" class="text-xl font-bold text-emerald-400">--.--</span>
+                    <span id="future-price" class="text-xl font-bold text-amber-400">--.--</span>
+                </div>
+                <div class="text-xs text-slate-500 mt-1 flex justify-between">
+                    <span>Spot: TWSE_NDX</span>
+                    <span>Future: TXF</span>
+                </div>
+            </div>
+
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <span class="text-xs text-slate-400">原始價差 / 可成交價差</span>
+                <div class="flex justify-between items-baseline mt-2">
+                    <span id="raw-basis" class="text-xl font-bold">--</span>
+                    <span id="executable-basis" class="text-xl font-bold text-sky-400">--</span>
+                </div>
+                <div class="text-xs text-slate-400 mt-1 flex justify-between">
+                    <span>Raw%: <span id="raw-spread-pct">--</span>%</span>
+                    <span>Exec%: <span id="exec-spread-pct">--</span>%</span>
+                </div>
+            </div>
+
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <span class="text-xs text-slate-400">除息校正後價差率</span>
+                <div class="text-2xl font-bold text-purple-400 mt-2" id="adjusted-spread-pct">--.--%</div>
+                <div class="text-xs text-slate-400 mt-1">含預估除息點數: <span id="div-points">--</span> 點</div>
+            </div>
+
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <span class="text-xs text-slate-400">預估淨套利率 (Expected Net)</span>
+                <div class="text-2xl font-bold text-emerald-400 mt-2" id="net-profit-pct">--.--%</div>
+                <div class="text-xs text-slate-400 mt-1">通知門檻: <span id="current-threshold">4.00</span>%</div>
+            </div>
+        </div>
+
+        <!-- 歷史走勢圖與保證金風控 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 my-6">
+            <!-- 加分項: 30分鐘即時折線圖 -->
+            <div class="lg:col-span-2 bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <h3 class="font-bold text-slate-200 mb-4">📈 30 分鐘價差與預估淨套利率走勢圖</h3>
+                <div class="h-64">
+                    <canvas id="chart-canvas"></canvas>
+                </div>
+            </div>
+
+            <!-- 保證金風險與壓力測試 -->
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <h3 class="font-bold text-slate-200 mb-3">🛡️ 保證金風險與壓力測試</h3>
+                <div class="space-y-3 text-sm">
+                    <div class="flex justify-between"><span class="text-slate-400">可用資金:</span> <span id="margin-capital" class="font-bold">--</span></div>
+                    <div class="flex justify-between"><span class="text-slate-400">原始保證金需求:</span> <span id="margin-initial">--</span></div>
+                    <div class="flex justify-between"><span class="text-slate-400">保證金覆蓋率:</span> <span id="margin-coverage" class="font-bold">--%</span></div>
+                    <hr class="border-slate-700">
+                    <div class="text-xs font-bold text-slate-300">市場極端波動壓力測試 (模擬剩餘權益):</div>
+                    <div class="flex justify-between text-xs"><span class="text-slate-400">-1% 波動:</span><span id="stress-1">--</span></div>
+                    <div class="flex justify-between text-xs"><span class="text-slate-400">-3% 波動:</span><span id="stress-3">--</span></div>
+                    <div class="flex justify-between text-xs"><span class="text-slate-400">-5% 波動:</span><span id="stress-5">--</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 規則設定表單與歷史 Log -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 my-6">
+            <!-- 規則設定 -->
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <h3 class="font-bold text-slate-200 mb-4">⚙️ 規則與風控參數設定</h3>
+                <form id="rule-form" onsubmit="saveRules(event)" class="space-y-3 text-sm">
+                    <div>
+                        <label class="block text-xs text-slate-400">淨套利率通知門檻 (%)</label>
+                        <input type="number" step="0.1" id="cfg-threshold" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 mt-1 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400">防洗冷卻時間 (秒)</label>
+                        <input type="number" id="cfg-cooldown" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 mt-1 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400">二次觸發增幅門檻 (%)</label>
+                        <input type="number" step="0.1" id="cfg-retrigger" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 mt-1 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400">帳戶可用資金 (NTD)</label>
+                        <input type="number" id="cfg-capital" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 mt-1 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400">Legging Risk 執行風險 (%)</label>
+                        <input type="number" step="0.05" id="cfg-legging" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 mt-1 text-white">
+                    </div>
+                    <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 font-bold py-2 rounded mt-2">儲存設定</button>
+                </form>
+            </div>
+
+            <!-- 歷史訊號 Audit Log -->
+            <div class="lg:col-span-2 bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-slate-200">📋 歷史觸發訊號 Log (Audit Trail)</h3>
+                    <button onclick="loadLogs()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded">重新整理 Log</button>
+                </div>
+                <div class="overflow-x-auto h-64">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="bg-slate-900 text-slate-400 sticky top-0">
+                            <tr>
+                                <th class="p-2">時間</th>
+                                <th class="p-2">狀態</th>
+                                <th class="p-2">現貨/期貨</th>
+                                <th class="p-2">校正價差%</th>
+                                <th class="p-2">預估淨套利%</th>
+                                <th class="p-2">保證金覆蓋率</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-table">
+                            <tr><td colspan="6" class="p-4 text-center text-slate-500">尚無歷史訊號記錄</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 警語 -->
+        <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
+            免責聲明：本通知僅為條件觸發之市場資訊提醒，不代表交易建議，請自行確認即時行情並人工下單。
+        </footer>
+    </div>
+
+    <script>
+        let ws;
+        let chart;
+        const chartData = { labels: [], rawSpread: [], netProfit: [] };
+        let staleMode = false, skewMode = false;
+
+        function initChart() {
+            const ctx = document.getElementById('chart-canvas').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [
+                        { label: '原始價差率 (%)', data: chartData.rawSpread, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0 },
+                        { label: '預估淨套利率 (%)', data: chartData.netProfit, borderColor: '#10b981', borderWidth: 2, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: false },
+                        y: { grid: { color: '#334155' } }
+                    }
+                }
+            });
+        }
+
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/market`);
+
+            ws.onopen = () => {
+                document.getElementById('conn-status').innerText = '連線正常';
+                document.getElementById('conn-status').className = 'px-3 py-1 text-xs rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+            };
+
+            ws.onclose = () => {
+                document.getElementById('conn-status').innerText = '斷線重連中...';
+                document.getElementById('conn-status').className = 'px-3 py-1 text-xs rounded-full bg-red-500/20 text-red-400 border border-red-500/30';
+                setTimeout(connectWS, 2000);
+            };
+        }
+
+        function updateDashboard(data) {
+            const spot = data.spot;
+            const future = data.future;
+            const evalRes = data.eval;
+            const metrics = evalRes.metrics;
+            const risk = evalRes.margin_risk;
+
+            document.getElementById('spot-price').innerText = spot.last_price.toFixed(2);
+            document.getElementById('future-price').innerText = future.last_price.toFixed(2);
+            document.getElementById('raw-basis').innerText = metrics.raw_basis.toFixed(2);
+            document.getElementById('raw-spread-pct').innerText = metrics.raw_spread_pct.toFixed(2);
+            document.getElementById('executable-basis').innerText = metrics.executable_basis.toFixed(2);
+            document.getElementById('exec-spread-pct').innerText = metrics.executable_spread_pct.toFixed(2);
+            document.getElementById('adjusted-spread-pct').innerText = metrics.adjusted_spread_pct.toFixed(2) + '%';
+            document.getElementById('div-points').innerText = metrics.expected_div_points;
+            document.getElementById('net-profit-pct').innerText = metrics.expected_net_profit_pct.toFixed(2) + '%';
+            document.getElementById('current-threshold').innerText = evalRes.threshold.toFixed(2);
+
+            // 風控卡片
+            document.getElementById('margin-capital').innerText = '$' + risk.margin_coverage.toFixed(0);
+            document.getElementById('margin-initial').innerText = '$' + risk.initial_margin_required.toLocaleString();
+            document.getElementById('margin-coverage').innerText = risk.margin_coverage.toFixed(1) + '%';
+            document.getElementById('stress-1').innerText = '$' + risk.stress_tests.shock_1_pct.remaining_equity.toLocaleString();
+            document.getElementById('stress-3').innerText = '$' + risk.stress_tests.shock_3_pct.remaining_equity.toLocaleString();
+            document.getElementById('stress-5').innerText = '$' + risk.stress_tests.shock_5_pct.remaining_equity.toLocaleString();
+
+            // 警示 Banner
+            const banner = document.getElementById('alert-banner');
+            if (evalRes.status !== 'NORMAL' && evalRes.status !== 'COOLDOWN_SUPPRESSED') {
+                banner.classList.remove('hidden');
+                document.getElementById('alert-title').innerText = evalRes.status;
+                document.getElementById('alert-msg').innerText = evalRes.message;
+                const badge = document.getElementById('alert-badge');
+                if (evalRes.status === 'ARBITRAGE_ALERT') {
+                    banner.className = 'my-4 p-4 rounded-lg bg-emerald-950 border border-emerald-500 text-emerald-200';
+                    badge.innerText = '套利提醒';
+                    badge.className = 'bg-emerald-500 text-slate-900 px-2 py-1 text-xs rounded font-bold';
+                } else {
+                    banner.className = 'my-4 p-4 rounded-lg bg-red-950 border border-red-500 text-red-200';
+                    badge.innerText = '風險警示';
+                    badge.className = 'bg-red-500 text-white px-2 py-1 text-xs rounded font-bold';
+                }
+            } else {
+                banner.classList.add('hidden');
+            }
+
+            // 更新折線圖 (動態保留 30 個點)
+            const timeStr = new Date().toLocaleTimeString();
+            chartData.labels.push(timeStr);
+            chartData.rawSpread.push(metrics.raw_spread_pct);
+            chartData.netProfit.push(metrics.expected_net_profit_pct);
+
+            if (chartData.labels.length > 30) {
+                chartData.labels.shift();
+                chartData.rawSpread.shift();
+                chartData.netProfit.shift();
+            }
+            chart.update();
+        }
+
+        async function loadRules() {
+            const res = await fetch('/api/rules');
+            const data = await res.json();
+            document.getElementById('cfg-threshold').value = data.net_profit_threshold;
+            document.getElementById('cfg-cooldown').value = data.cooldown_seconds;
+            document.getElementById('cfg-retrigger').value = data.re_trigger_step;
+            document.getElementById('cfg-capital').value = data.available_capital;
+            document.getElementById('cfg-legging').value = data.legging_risk_pct;
+        }
+
+        async function saveRules(e) {
+            e.preventDefault();
+            const payload = {
+                net_profit_threshold: parseFloat(document.getElementById('cfg-threshold').value),
+                cooldown_seconds: parseInt(document.getElementById('cfg-cooldown').value),
+                re_trigger_step: parseFloat(document.getElementById('cfg-retrigger').value),
+                available_capital: parseFloat(document.getElementById('cfg-capital').value),
+                legging_risk_pct: parseFloat(document.getElementById('cfg-legging').value)
+            };
+            await fetch('/api/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            alert('規則設定已成功儲存！');
+        }
+
+        async function loadLogs() {
+            const res = await fetch('/api/logs');
+            const logs = await res.json();
+            const tbody = document.getElementById('logs-table');
+            if (logs.length === 0) return;
+            tbody.innerHTML = logs.map(l => `
+                <tr class="border-b border-slate-800 hover:bg-slate-700/50">
+                    <td class="p-2">${l.timestamp.split('T')[1].split('.')[0]}</td>
+                    <td class="p-2 font-bold ${l.notification_status === 'ARBITRAGE_ALERT' ? 'text-emerald-400' : 'text-amber-400'}">${l.notification_status}</td>
+                    <td class="p-2">${l.spot_price} / ${l.future_price}</td>
+                    <td class="p-2">${l.adjusted_spread_pct.toFixed(2)}%</td>
+                    <td class="p-2 font-bold">${l.expected_net_profit_pct.toFixed(2)}%</td>
+                    <td class="p-2">${l.margin_coverage.toFixed(1)}%</td>
+                </tr>
+            `).join('');
+        }
+
+        async function toggleTestMode(type) {
+            if (type === 'stale') staleMode = !staleMode;
+            if (type === 'skew') skewMode = !skewMode;
+            await fetch(`/api/test_mode?stale=${staleMode}&skew=${skewMode}`, { method: 'POST' });
+        }
+
+        window.onload = () => {
+            initChart();
+            connectWS();
+            loadRules();
+            loadLogs();
+            setInterval(loadLogs, 5000);
+        };
+    </script>
+</body>
+</html>
