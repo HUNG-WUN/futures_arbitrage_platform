@@ -119,7 +119,38 @@
   </tbody>
 </table>
 <hr />
+<!-- 🗄️ 資料庫 Schema 與 Migration 說明 -->
+<hr />
 
+<h2>🗄️ 資料庫 Schema 與 Migration 說明</h2>
+<p>
+  本專案採用 <code>SQLite</code> 作為輕量化持久化儲存庫，完整 DDL 定義請參考根目錄之 <code>schema.sql</code> 檔案。
+</p>
+
+<h3>1. 核心 Schema 結構</h3>
+<ul>
+  <li>
+    <b><code>rule_settings</code></b>：管理各商品對之獨立正逆價差觸發門檻與冷卻時間。
+  </li>
+  <li>
+    <b><code>audit_logs</code></b>：記錄每一次觸發通知時之行情、價差、成本、風控與規則快照（符合 Task 10 規格之 6 大欄位群組）。
+  </li>
+</ul>
+
+<h3>2. Migration 與資料庫初始化策略</h3>
+<ul>
+  <li>
+    <b>MVP 自動初始化</b>：系統啟動時會由 <code>app/database.py</code> 中的 <code>init_db()</code> 自動判定並建立上述資料表與預設寫入設定值。
+  </li>
+  <li>
+    <b>正式版 Migration 機制</b>：<br />
+    若正式環境升級至大型資料庫（如 PostgreSQL / MySQL），建議導入 <b>Alembic</b> (SQLAlchemy 專用 Migration 工具) 進行 Schema 的版本控制：
+    <pre><code># 正式上線 Migration 流程範例
+alembic init alembic
+alembic revision --autogenerate -m "Add audit_logs and rule_settings tables"
+alembic upgrade head</code></pre>
+  </li>
+</ul>
 <h2>📅 正式版除息資料擷取策略 (Dividend Data Retrieval Strategy)</h2>
 <p>針對 Task 3 實務上正式版串接臺灣證券交易所 (TWSE) 與公開資訊觀測站 (MOPS) 之策略說明：</p>
 <ul>
